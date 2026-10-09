@@ -510,12 +510,42 @@ public final class RestAlert {
         android.os.Bundle extras = new android.os.Bundle();
         extras.putBoolean("android.requestPromotedOngoing", true);
         b.addExtras(extras);
+        if (Build.VERSION.SDK_INT >= 36) liveUpdate(b, max, left, clock, accent);
         if (Build.VERSION.SDK_INT >= 26) b.setOnlyAlertOnce(true);
         else b.setPriority(Notification.PRIORITY_DEFAULT);
         if (Build.VERSION.SDK_INT >= 31) {
             b.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE);
         }
         return b.build();
+    }
+
+    /**
+     * Android 16's Live Update shape, which One UI 8 shows in the Now Bar — on the Z Flip cover
+     * screen too, the one place there a notification gets a bar and controls; an ordinary
+     * notification there shows only its title and text. A ProgressStyle bar (shrinking with the
+     * rest, like the app's), the clock as the status-bar chip, and the promotion asked for.
+     * Called by reflection: the app compiles against API 35, where none of these exist, and any
+     * failure leaves the plain template, which still works.
+     */
+    private static void liveUpdate(Notification.Builder b, int max, int left, String clock, int accent) {
+        try {
+            Class<?> styleClass = Class.forName("android.app.Notification$ProgressStyle");
+            Class<?> segmentClass = Class.forName("android.app.Notification$ProgressStyle$Segment");
+            Object segment = segmentClass.getConstructor(int.class).newInstance(max);
+            segmentClass.getMethod("setColor", int.class).invoke(segment, accent);
+            Object style = styleClass.getConstructor().newInstance();
+            styleClass.getMethod("setProgressSegments", java.util.List.class).invoke(style, java.util.Collections.singletonList(segment));
+            styleClass.getMethod("setProgress", int.class).invoke(style, left);
+            b.setStyle((Notification.Style) style);
+        } catch (Throwable e) {
+            Log.w("openGym", "ProgressStyle unavailable", e);
+        }
+        try {
+            Notification.Builder.class.getMethod("setShortCriticalText", String.class).invoke(b, clock);
+        } catch (Throwable ignored) { /* no status-bar chip text */ }
+        try {
+            Notification.Builder.class.getMethod("setRequestPromotedOngoing", boolean.class).invoke(b, true);
+        } catch (Throwable ignored) { /* the extra above still asks */ }
     }
 
     private static Notification.Action action(Context ctx, String label, String act, int code) {

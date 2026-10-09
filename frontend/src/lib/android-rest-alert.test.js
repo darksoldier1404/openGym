@@ -44,6 +44,11 @@ describe('the rest-over alert on Android', () => {
     expect(samsung).not.toMatch(/setCustom(Big)?ContentView|DecoratedCustomViewStyle|setColorized/)
     for (const a of ['ACTION_PAUSE', 'ACTION_MINUS', 'ACTION_PLUS', 'ACTION_SKIP']) expect(samsung).toContain(a)
     expect(samsung).toContain('"android.requestPromotedOngoing"')
+    // Android 16 / One UI 8: a Live Update (ProgressStyle) is what the Now Bar, and so the
+    // cover screen, draws with a bar.
+    expect(samsung).toContain('if (Build.VERSION.SDK_INT >= 36) liveUpdate(b, max, left, clock, accent);')
+    expect(alert).toContain('"android.app.Notification$ProgressStyle"')
+    expect(alert).toContain('"setShortCriticalText"')
   })
 
   it('paints the rest on a cover-screen widget, which shows the bar and buttons a notification cannot', () => {
