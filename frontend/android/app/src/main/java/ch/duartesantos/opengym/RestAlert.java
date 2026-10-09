@@ -8,7 +8,6 @@ import android.app.PendingIntent;
 import android.content.Context;
 import android.content.res.ColorStateList;
 import android.content.Intent;
-import android.view.View;
 import android.widget.RemoteViews;
 import android.media.AudioAttributes;
 import android.media.AudioFocusRequest;
@@ -415,14 +414,12 @@ public final class RestAlert {
     /**
      * One clock and one bar, in both the collapsed and the expanded card.
      *
-     * The title ("Rest") and the text (the clock) are filled too: they are what a surface that
-     * cannot draw a custom card falls back on. The cover screen of a Galaxy Z Flip shows a
-     * notification's title and text and nothing of its RemoteViews, so with them empty the rest
-     * timer did not show there at all (Z Flip 6). The service reposts every second, so the text
-     * keeps time there too. Stock Android hides both behind the custom card; Samsung prints every
-     * standard slot next to it (a time in title, text and subtext once stacked the same clock
-     * three times beside the bar), so on Samsung the card's own clock steps aside for them and
-     * the subtext stays empty.
+     * The title ("Rest") and the text (the clock) are filled too, for any surface that cannot
+     * draw a custom card; stock Android hides both behind it.
+     *
+     * Samsung gets the system's own template instead (samsungCountdown): the cover screen of a
+     * Galaxy Z Flip draws no RemoteViews at all, so the custom card showed there without its bar
+     * and its clock (Z Flip 6), and One UI prints every standard slot beside a custom card anyway.
      */
     @SuppressWarnings("deprecation")
     static Notification countdownNotification(Context ctx, long leftMs, long totalMs, boolean paused,
@@ -434,6 +431,7 @@ public final class RestAlert {
         String clock = clock(left);
         NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
         ensureCountdownChannel(ctx, nm);
+        if (SAMSUNG) return samsungCountdown(ctx, max, left, clock, paused, title, pause, resume, minus, plus, skip, accent);
         RemoteViews compact = new RemoteViews(ctx.getPackageName(), R.layout.rest_countdown);
         fillClock(compact, clock, max, left, accent);
         RemoteViews expanded = new RemoteViews(ctx.getPackageName(), R.layout.rest_countdown_big);
@@ -479,10 +477,55 @@ public final class RestAlert {
         return b.build();
     }
 
+    /**
+     * The countdown in the system's own template, for Samsung: title, the clock as the text, the
+     * system progress bar and the four controls as notification actions. That is what the Z Flip
+     * cover screen and the lock screen can draw, where a custom card came out without its bar
+     * and clock. It also meets Android 16's terms for a Live Update (no custom views, ongoing,
+     * a title, not colorized), which One UI shows in the Now Bar; asked for through the extra by
+     * its name, so the app still builds against API 35.
+     */
+    @SuppressWarnings("deprecation")
+    private static Notification samsungCountdown(Context ctx, int max, int left, String clock, boolean paused,
+                                                 String title, String pause, String resume, String minus, String plus,
+                                                 String skip, int accent) {
+        Notification.Builder b = Build.VERSION.SDK_INT >= 26
+                ? new Notification.Builder(ctx, COUNTDOWN_CHANNEL_ID)
+                : new Notification.Builder(ctx);
+        b.setSmallIcon(R.drawable.ic_stat_dumbbell)
+                .setContentTitle(title == null || title.isEmpty() ? "Rest" : title)
+                .setContentText(clock)
+                .setProgress(max, left, false)
+                .setShowWhen(false)
+                .setOngoing(true)
+                .setCategory(Notification.CATEGORY_PROGRESS)
+                .setVisibility(Notification.VISIBILITY_PUBLIC)
+                .setColor(accent)
+                .setContentIntent(openApp(ctx))
+                .setLocalOnly(true)
+                .addAction(action(ctx, paused ? resume : pause, ACTION_PAUSE, 51))
+                .addAction(action(ctx, minus, ACTION_MINUS, 52))
+                .addAction(action(ctx, plus, ACTION_PLUS, 53))
+                .addAction(action(ctx, skip, ACTION_SKIP, 54));
+        android.os.Bundle extras = new android.os.Bundle();
+        extras.putBoolean("android.requestPromotedOngoing", true);
+        b.addExtras(extras);
+        if (Build.VERSION.SDK_INT >= 26) b.setOnlyAlertOnce(true);
+        else b.setPriority(Notification.PRIORITY_DEFAULT);
+        if (Build.VERSION.SDK_INT >= 31) {
+            b.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE);
+        }
+        return b.build();
+    }
+
+    private static Notification.Action action(Context ctx, String label, String act, int code) {
+        return new Notification.Action.Builder(
+                android.graphics.drawable.Icon.createWithResource(ctx, R.drawable.ic_stat_dumbbell),
+                label, control(ctx, act, code)).build();
+    }
+
     private static void fillClock(RemoteViews views, String clock, int max, int left, int accent) {
         views.setTextViewText(R.id.rest_clock, clock);
-        // Samsung already prints the clock from the notification's text (countdownNotification).
-        if (SAMSUNG) views.setViewVisibility(R.id.rest_clock, View.GONE);
         views.setProgressBar(R.id.rest_bar, max, left, false);
         if (Build.VERSION.SDK_INT >= 31) {
             views.setColorStateList(R.id.rest_bar, "setProgressTintList", ColorStateList.valueOf(accent));

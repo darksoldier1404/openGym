@@ -31,4 +31,15 @@ describe('the rest-over alert on Android', () => {
     expect(service).toContain('title = text(intent, "title", title);')
     expect(service).toMatch(/countdownNotification\(\s*this, left, totalMs, paused, title,/)
   })
+
+  it('on Samsung, draws the countdown in the system template the cover screen can show', () => {
+    const card = alert.slice(alert.indexOf('static Notification countdownNotification('), alert.indexOf('private static void fillClock('))
+    expect(card).toContain('if (SAMSUNG) return samsungCountdown(')
+    const samsung = card.slice(card.indexOf('private static Notification samsungCountdown('))
+    expect(samsung).toContain('.setProgress(max, left, false)')
+    expect(samsung).toContain('.setContentText(clock)')
+    expect(samsung).not.toMatch(/setCustom(Big)?ContentView|DecoratedCustomViewStyle|setColorized/)
+    for (const a of ['ACTION_PAUSE', 'ACTION_MINUS', 'ACTION_PLUS', 'ACTION_SKIP']) expect(samsung).toContain(a)
+    expect(samsung).toContain('"android.requestPromotedOngoing"')
+  })
 })
