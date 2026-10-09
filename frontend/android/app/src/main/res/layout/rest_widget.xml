@@ -6,9 +6,9 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#FF000000"
-    android:gravity="center"
+    android:gravity="center_horizontal"
     android:orientation="vertical"
-    android:padding="16dp">
+    android:padding="10dp">
 
     <TextView
         android:id="@+id/rw_title"
@@ -18,14 +18,23 @@
         android:textColor="#FFAEAEB2"
         android:textSize="16sp" />
 
+    <!-- Takes whatever height the title, bar and controls leave, and its digits size to it:
+         at a fixed 64sp the clock filled the Flex Window and pushed the bar and the buttons
+         below its edge (Z Flip 6). -->
     <TextView
         android:id="@+id/rw_clock"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:autoSizeMaxTextSize="72sp"
+        android:autoSizeMinTextSize="20sp"
+        android:autoSizeStepGranularity="2sp"
+        android:autoSizeTextType="uniform"
         android:fontFeatureSettings="tnum"
+        android:gravity="center"
+        android:maxLines="1"
         android:text="–:––"
         android:textColor="#FFFFFFFF"
-        android:textSize="64sp"
         android:textStyle="bold" />
 
     <ProgressBar
@@ -33,7 +42,7 @@
         style="?android:attr/progressBarStyleHorizontal"
         android:layout_width="match_parent"
         android:layout_height="8dp"
-        android:layout_marginTop="8dp"
+        android:layout_marginTop="4dp"
         android:max="100"
         android:progress="0"
         android:progressBackgroundTint="#3A3A3C"
@@ -43,7 +52,7 @@
         android:id="@+id/rw_controls"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
+        android:layout_marginTop="10dp"
         android:gravity="center"
         android:orientation="horizontal"
         android:visibility="gone">
