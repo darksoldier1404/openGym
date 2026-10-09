@@ -7,6 +7,9 @@ import { readFileSync } from 'node:fs'
 const read = rel => readFileSync(new URL(rel, import.meta.url), 'utf8')
 const alert = read('../../android/app/src/main/java/ch/duartesantos/opengym/RestAlert.java')
 const service = read('../../android/app/src/main/java/ch/duartesantos/opengym/RestTimerService.java')
+const manifest = read('../../android/app/src/main/AndroidManifest.xml')
+const widgetInfo = read('../../android/app/src/main/res/xml/rest_widget_info.xml')
+const widgetSamsung = read('../../android/app/src/main/res/xml/rest_widget_samsung.xml')
 
 describe('the rest-over alert on Android', () => {
   it('plays the tone before the countdown’s foreground service stops', () => {
@@ -41,5 +44,13 @@ describe('the rest-over alert on Android', () => {
     expect(samsung).not.toMatch(/setCustom(Big)?ContentView|DecoratedCustomViewStyle|setColorized/)
     for (const a of ['ACTION_PAUSE', 'ACTION_MINUS', 'ACTION_PLUS', 'ACTION_SKIP']) expect(samsung).toContain(a)
     expect(samsung).toContain('"android.requestPromotedOngoing"')
+  })
+
+  it('paints the rest on a cover-screen widget, which shows the bar and buttons a notification cannot', () => {
+    expect(manifest).toMatch(/android:name="\.RestWidget"[\s\S]*?android\.appwidget\.provider[\s\S]*?com\.samsung\.android\.appwidget\.provider[\s\S]*?<\/receiver>/)
+    expect(widgetSamsung).toMatch(/<samsung-appwidget-provider display="sub_screen"/)
+    expect(widgetInfo).toContain('android:widgetCategory="keyguard"')
+    expect(service).toContain('RestWidget.show(this, left, totalMs, paused, title,')
+    expect(service).toContain('RestWidget.clear(this);')
   })
 })

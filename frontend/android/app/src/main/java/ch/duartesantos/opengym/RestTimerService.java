@@ -118,6 +118,7 @@ public class RestTimerService extends Service {
         releaseCpu();
         endsAt = 0;
         stopForegroundCompat();
+        RestWidget.clear(this);
         super.onDestroy();
     }
 
@@ -236,6 +237,8 @@ public class RestTimerService extends Service {
             } else {
                 startForeground(RestAlert.COUNTDOWN_ID, n);
             }
+            // The cover screen draws no notification bar or buttons: its widget gets the same.
+            RestWidget.show(this, left, totalMs, paused, title, pauseLabel, resumeLabel, minusLabel, plusLabel, skipLabel, accent, ink);
         } catch (Exception e) {
             stopSelf();
         }

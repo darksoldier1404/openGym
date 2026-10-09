@@ -293,7 +293,7 @@ public final class RestAlert {
         nm.createNotificationChannel(channel);
     }
 
-    private static PendingIntent openApp(Context ctx) {
+    static PendingIntent openApp(Context ctx) {
         Intent open = new Intent(ctx, MainActivity.class);
         open.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_NEW_TASK);
         return PendingIntent.getActivity(ctx, NOTIFICATION_ID + 1, open, FLAGS);
@@ -542,7 +542,7 @@ public final class RestAlert {
         }
     }
 
-    private static PendingIntent control(Context ctx, String action, int code) {
+    static PendingIntent control(Context ctx, String action, int code) {
         Intent i = new Intent(ctx, RestTimerService.class);
         i.setAction(action);
         return PendingIntent.getService(ctx, code, i, FLAGS);
