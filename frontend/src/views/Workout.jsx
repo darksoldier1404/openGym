@@ -31,6 +31,7 @@ import { Button, Check, NumberField } from '../components/ui.jsx'
 import { defaultIncrement, weightIncrement, stepWeight } from '../lib/progression.js'
 import { progressionGuidance } from '../lib/progression-copy.js'
 import { buildPlannedEntry, plannedConfigOf, builtOutOfProgression } from '../lib/session-start.js'
+import { buildInExUnit, weightView, exIncrement, plateStateFor, targetToExUnit, exUnitOf, profileUnit } from '../lib/ex-unit.js'
 import { routineChangesFromEntry, updateRoutineFromEntry } from '../lib/routines.js'
 import { sessionNoProg, setSessionNoProg, setEntryNoProg, joinSessionNoProg } from '../lib/session-noprog.js'
 import { glyphOf } from '../lib/glyphs.js'
@@ -125,7 +126,9 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
     const base = drops.length ? drops[drops.length - 1].w : (row.w || 0)
     const pct = entry.target?.intensifier?.type === 'dropset' ? entry.target.intensifier.pct : undefined
     // On a weight you can load: the plates you own, else the exercise's step (lib/plates.js).
-    return addDrop(row, { w: nextDropWeight(base, pct, dropGrid(S, { ...entry.target, id: entry.id })), r: row.r })
+    // In the exercise's own unit when it has one (lib/ex-unit.js): the drop lands on its plates.
+    const grid = dropGrid(plateStateFor(S, entry.id), targetToExUnit(S, { ...entry.target, id: entry.id }))
+    return addDrop(row, { w: wv.keep(nextDropWeight(wv.show(base), pct, grid)), r: row.r })
   })
   // A rest-pause row's own reps are always the total across every burst (see
   // applyIntensifierPlan/history.js) — clusters are the breakdown of that total, not extra on
@@ -168,6 +171,9 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
     return { ...setClusterAt(row, ci, { r: v }), r: Math.max(0, (row.r || 0) + delta) }
   })
   const ex = exOr(entry.id)
+  // The exercise's weight unit (lib/ex-unit.js): weights are stored in the profile's unit and
+  // shown, typed and stepped in this one. The profile's own unit is a pass-through.
+  const wv = weightView(S, entry.id)
   const thumb = !dense && S.gifSize === 'mini' && hasWorkoutMedia(ex)
   const mode = modeOf({ ...(entry.target || {}), id: entry.id })
   const cardio = mode === 'cardio'
@@ -230,7 +236,7 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
   // in the hover title and in what a screen reader hears.
   const refLabel = refBest ? t('Best set') : t('Last time')
   const refAgo = ref ? fmtDaysAgo(ref.d, S.active.d || todayISO()) : ''
-  const refSets = ref ? (refBest ? [ref.set] : ref.sets).map(s => setLabel(entry.id, s, ref.target, speedUnitOf(S))) : []
+  const refSets = ref ? (refBest ? [ref.set] : ref.sets).map(s => setLabel(entry.id, wv.set(s), ref.target, speedUnitOf(S))) : []
   const refText = ref ? `${refLabel} (${refAgo}, ${fmtDate(ref.d, true, true)}): ` + refSets.join(', ') : refBest && last ? t('Best set: nothing logged this way yet') : null
   const refAction = refBest ? t('Show last time instead') : t('Show your best set instead')
   // The button's text is the reference, which says nothing about what a tap does; its name
@@ -253,8 +259,10 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
   // R sub-row, each with its own weight/reps/effort and done tick. Warm-ups stay single.
   const perSide = mode === 'reps' && isPerSide(cfg)
   const added = bw && entry.sets.some(s => s.w > 0)
-  const loadStep = mode === 'reps' ? weightIncrement(cfg, S.unit) : 2.5
-  const loadCol = { f: 'w', step: loadStep, dec: true, hd: bw ? t('Added ({0})', S.unit) : t('Weight ({0})', S.unit) }
+  // The step is in the unit on screen: the exercise's own increment, else its unit's default.
+  const loadStep = mode === 'reps' ? exIncrement(S, cfg) : 2.5
+  const loadCol = { f: 'w', step: loadStep, dec: true, hd: bw ? t('Added ({0})', wv.unit) : t('Weight ({0})', wv.unit),
+    ...(wv.own ? { view: wv.show, store: wv.keep } : {}) }
   // The reps column is the total in every mode, unilateral included — the stepper walks in
   // twos there so the number you land on is one you can actually split evenly.
   const repCol = { f: 'r', step: repStep(cfg), dec: false, hd: t('Reps') }
@@ -286,7 +294,7 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
     // closure problem entirely and keeps every tap operating on the real current value.
     const fresh = useStore.getState().S.active?.entries[entryIdx]?.sets[i]
     const cur = fresh ? fresh[col.f] : s[col.f]
-    if (mode === 'reps' && col.f === 'w') return onField(i, col.f, stepWeight(cur, col.step, dir))
+    if (mode === 'reps' && col.f === 'w') return onField(i, col.f, col.store ? col.store(stepWeight(viewOf(col, cur), col.step, dir)) : stepWeight(cur, col.step, dir))
     // The step is in the unit on screen: +0.5 mph, not +0.5 km/h shown as +0.31.
     const next = Math.max(0, Math.round(((viewOf(col, cur) || 0) + dir * col.step) * 100) / 100)
     onField(i, col.f, col.store ? col.store(next) : next)
@@ -316,9 +324,11 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
   // is not in the sequence.
   const plateLoading = mode === 'reps' && !editing
   const loadKind = plateLoading ? loadKindFor(S, cfg) : 'none'
-  const base = baseWeightFor(S, entry.id)
+  // In the exercise's own unit: its plates, its bar (lib/ex-unit.js plateStateFor).
+  const PS = plateStateFor(S, entry.id)
+  const base = baseWeightFor(PS, entry.id)
   const loadSeq = loadKind === 'none' ? [] : (() => {
-    const inv = inventoryFor(S)
+    const inv = inventoryFor(PS)
     const out = []
     entry.sets.forEach((s, i) => {
       let w = s.w
@@ -327,8 +337,8 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
         if (L && R && L !== R) return
         w = L || R
       }
-      out.push({ key: String(i), load: rowLoad(loadKind, w, base, inv) })
-      dropsOf(s).forEach((d, di) => out.push({ key: i + ':d' + di, load: rowLoad(loadKind, d.w, base, inv) }))
+      out.push({ key: String(i), load: rowLoad(loadKind, wv.show(w), base, inv) })
+      dropsOf(s).forEach((d, di) => out.push({ key: i + ':d' + di, load: rowLoad(loadKind, wv.show(d.w), base, inv) }))
     })
     return out
   })()
@@ -337,7 +347,7 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
   const loadSummary = loadKind === 'none' ? t('Off')
     : loadKind === 'single' ? t('Single stack')
       : !usesBar(ex) ? t('Per side')
-        : base > 0 ? t('Bar {0}', fmtNum(base) + ' ' + S.unit) : t('No bar')
+        : base > 0 ? t('Bar {0}', fmtNum(base) + ' ' + wv.unit) : t('No bar')
   // The line under a set row (or a drop sub-row): shown on the first loaded row and whenever the
   // stack changes from the loaded row before it, so a run of equal weights shows its plates once.
   // What to strip and what to add rides along, except in the compact view.
@@ -357,7 +367,7 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
     const moves = d ? [...d.strip.map(w => '−' + fmtPlate(w)), ...d.add.map(w => '+' + fmtPlate(w))] : []
     return <div className="plateline">
       <Icon name="plate" />
-      <span>{text}{L.missing > 0 && <> · <span className="short">{t('{0} short', fmtPlate(L.missing) + ' ' + S.unit)}</span></>}</span>
+      <span>{text}{L.missing > 0 && <> · <span className="short">{t('{0} short', fmtPlate(L.missing) + ' ' + wv.unit)}</span></>}</span>
       {moves.length > 0 && <span className="moves">{moves.join(' ')}</span>}
     </div>
   }
@@ -386,6 +396,13 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
       { title: t('Settings'), items: [
         onProgressionSettings && { icon: 'slider', label: t('Exercise settings'), sub: guidance ? t(guidance.policyLabel) : t('Sets, reps, rest, progression'), onClick: onProgressionSettings },
         onRest && { icon: 'timer', label: t('Rest timer'), sub: restSub, onClick: onRest },
+        // kg or lb for this exercise alone (lib/ex-unit.js): a tap switches it. Back on the
+        // profile's unit the override is dropped, so the exercise follows a later unit switch.
+        !cardio && { icon: 'scale', label: t('Weight unit'), sub: wv.own ? wv.unit : t('Default ({0})', wv.unit), onClick: () => update(s => {
+          const next = exUnitOf(s, entry.id) === 'lb' ? 'kg' : 'lb'
+          s.exUnit = s.exUnit || {}
+          if (next === profileUnit(s)) delete s.exUnit[entry.id]; else s.exUnit[entry.id] = next
+        }) },
         plateLoading && { icon: 'plate', label: t('Plate loading'), sub: loadSummary, onClick: () => barWeightSheet(entry.id, cfg) },
         routineUpdate && { icon: 'clipboard', label: t('Update routine'), sub: routineUpdate.sub, onClick: routineUpdate.run },
       ] },
@@ -412,7 +429,7 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
     const sideTag = sideTagOf(s)
     menuSheet({
       title: warm ? t('Warm-up') : sideTag ? t('Set {0} ({1})', setNumOf(s, i), sideTag) : t('Set {0}', setNumOf(s, i)),
-      subtitle: setLabel(entry.id, s, entry.target, speedUnit),
+      subtitle: setLabel(entry.id, wv.set(s), entry.target, speedUnit),
       sections: [
         // A warm-up logged as a work set (or the other way round) changes phase here. Reps sets
         // only, the kind a warm-up is added as; one work set always stays, and a per-side
@@ -473,7 +490,7 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
   const sideBump = (i, side, col, dir) => {
     const fresh = useStore.getState().S.active?.entries[entryIdx]?.sets[i]?.sides?.[side]
     const cur = fresh ? fresh[col.f] : 0
-    if (col.f === 'w') return setSide(i, side, col.f, stepWeight(cur, col.step, dir))
+    if (col.f === 'w') return setSide(i, side, col.f, col.store ? col.store(stepWeight(viewOf(col, cur), col.step, dir)) : stepWeight(cur, col.step, dir))
     // Reps step by one per side: repCol's step of two keeps the *combined* total evenly
     // splittable, but here each side is logged directly, so one tap is one rep.
     const step = col.f === 'r' ? 1 : col.step
@@ -482,8 +499,8 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
   const sideCell = (sd, i, side, col, cls) => (
     <div className={'stp ' + cls + (wc.steppers ? '' : ' plain')}>
       {wc.steppers && <button aria-label={t('Decrease')} onClick={() => sideBump(i, side, col, -1)}><Icon name="minus" /></button>}
-      <span className="val"><NumberField decimal={col.dec} value={sd[col.f] ?? ''}
-        onChange={v => setSide(i, side, col.f, v)} /></span>
+      <span className="val"><NumberField decimal={col.dec} value={viewOf(col, sd[col.f]) ?? ''}
+        onChange={v => setSide(i, side, col.f, col.store ? col.store(v) : v)} /></span>
       {wc.steppers && <button aria-label={t('Increase')} onClick={() => sideBump(i, side, col, 1)}><Icon name="plus" /></button>}
     </div>
   )
@@ -528,7 +545,7 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
       {dropsOf(sd).map((d, di) => (
         <div className="subrow" key={'d' + di}>
           <span className="subn">{t('Drop {0}', di + 1)}</span>
-          {miniStepper(d.w, loadStep, true, v => setDropField(i, di, 'w', v, side), true)}
+          {miniStepper(wv.show(d.w), loadStep, true, v => setDropField(i, di, 'w', wv.keep(v), side), true)}
           {miniStepper(d.r, 1, false, v => setDropField(i, di, 'r', v, side))}
           <button className="iconbtn" aria-label={t('Remove drop')} onClick={() => removeDrop(i, di)}><Icon name="xmark" /></button>
         </div>
@@ -631,7 +648,7 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
       {!cardio && isPerSide(cfg) && <span className="tag acc nocap"><Icon name="sides" />{t('Per side')}</span>}
       {(ex.tg || ex.bp) && <span className="tag">{t(MUSCLE_NAME[ex.tg] || ex.tg || ex.bp)}</span>}
       {ex.eq && <span className="tag">{t(ex.eq)}</span>}
-      {best > 0 && <span className="tag nocap">{t('Best:')} {fmtNum(best)} {S.unit}</span>}
+      {best > 0 && <span className="tag nocap">{t('Best:')} {fmtNum(wv.show(best))} {wv.unit}</span>}
     </div>
     {/* Three notes can apply to one exercise and they are not interchangeable, so each keeps its
         own line and its own icon: the plan's instruction (cfg.note, from the routine), the
@@ -676,7 +693,7 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
           {!warm && s.max && <div className="setph">{t('Max: as many reps as you can')}{(() => {
             const rec = maxRecordAt(H.workouts, entry.id, s.w)
             if (!rec) return null
-            return ' · ' + (rec.w > 0 ? tn('Record: {0} rep at {1}', 'Record: {0} reps at {1}', rec.r, fmtNum(rec.w) + ' ' + S.unit) : tn('Record: {0} rep', 'Record: {0} reps', rec.r))
+            return ' · ' + (rec.w > 0 ? tn('Record: {0} rep at {1}', 'Record: {0} reps at {1}', rec.r, fmtNum(wv.show(rec.w)) + ' ' + wv.unit) : tn('Record: {0} rep', 'Record: {0} reps', rec.r))
           })()}</div>}
           {!pairTail && swipeRow(s, i, perSide && !warm && isSideSet(s) ? (
             // Unilateral work set: the number sits beside a two-row L/R stack, each side logged
@@ -704,7 +721,7 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
             {dropsOf(s).map((d, di) => (
               <div className="subrow" key={'d' + di}>
                 <span className="subn">{t('Drop {0}', di + 1)}</span>
-                {miniStepper(d.w, loadStep, true, v => setDropField(i, di, 'w', v), true)}
+                {miniStepper(wv.show(d.w), loadStep, true, v => setDropField(i, di, 'w', wv.keep(v)), true)}
                 {miniStepper(d.r, 1, false, v => setDropField(i, di, 'r', v))}
                 <button className="iconbtn" aria-label={t('Remove drop')} onClick={() => removeDrop(i, di)}><Icon name="xmark" /></button>
               </div>
@@ -1115,7 +1132,14 @@ function ActiveWorkout() {
   const removeSet = idx => mutEntry(idx, e => { e.sets = removeLastSet(e.sets) })
   const addWarmup = idx => mutEntry(idx, e => {
     const m = modeOf({ ...(e.target || {}), id: e.id })
-    e.sets = insertWarmupRow(e.sets, m, e.target || {}, defaultIncrement(e.id, S.unit))
+    // Ramped in the exercise's own unit when it has one (lib/ex-unit.js); only the new row is
+    // taken back, so the rows already there keep their stored numbers to the digit.
+    const v = weightView(S, e.id)
+    if (!v.own) { e.sets = insertWarmupRow(e.sets, m, e.target || {}, defaultIncrement(e.id, S.unit)); return }
+    const firstWork = e.sets.findIndex(x => !isWarmupRow(x))
+    const at = firstWork === -1 ? e.sets.length : firstWork
+    const ramped = insertWarmupRow(e.sets.map(v.set), m, targetToExUnit(S, { ...(e.target || {}), id: e.id }), defaultIncrement(e.id, v.unit))
+    e.sets = [...e.sets.slice(0, at), v.keepSet(ramped[at]), ...e.sets.slice(at)]
   })
   // The set-number menu's Remove and the swipe both go through deleteActiveSet, Undo and all.
   const removeSetAt = (idx, i) => deleteActiveSet(idx, i, { editing })
@@ -1306,10 +1330,11 @@ function ActiveWorkout() {
       // source, target); freestyle reproduces what you did last time.
       // Read from before the session's day when it is logged into the past (sessionHistory).
       const past = sessionHistory(s)
+      // An exercise with its own unit is built in it and handed back in the profile's (lib/ex-unit.js).
       const built = freestyle
-        ? { target: { ...cfg }, plan: null, sets: applyIntensifierPlan(buildSets(past, full, {
-          step: modeOf(full) === 'reps' ? weightIncrement(full, s.unit) : defaultIncrement(ex.id, s.unit), preferLast: true,
-        }), full, dropGrid(s, full)) }
+        ? { plan: null, ...buildInExUnit(past, full, (view, own) => ({ target: { ...own }, sets: applyIntensifierPlan(buildSets(view, own, {
+          step: modeOf(own) === 'reps' ? weightIncrement(own, view.unit) : defaultIncrement(ex.id, view.unit), preferLast: true,
+        }), own, dropGrid(view, own)) })) }
         : buildPlannedEntry(past, full, routine, { noProg })
       const insertAt = insertionIndexAfterCurrentUnit(supersetUnits(s.active.entries), s.active.cur, s.active.entries.length)
       s.active.entries.splice(insertAt, 0, joinSessionNoProg(s.active, { id: ex.id, ...built, ...(curRid ? { rid: curRid } : {}), ...(noProg ? { noProg: true } : {}) }))

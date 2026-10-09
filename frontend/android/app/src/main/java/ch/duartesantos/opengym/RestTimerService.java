@@ -21,6 +21,7 @@ public class RestTimerService extends Service {
     private long pausedLeft;
     private boolean paused;
     private boolean running;
+    private String title = "Rest";
     private String pauseLabel = "Pause";
     private String resumeLabel = "Resume";
     private String minusLabel = "\u2212 15s";
@@ -97,6 +98,7 @@ public class RestTimerService extends Service {
         paused = false;
         running = true;
         holdCpuUntilEnd();
+        title = text(intent, "title", title);
         pauseLabel = text(intent, "pause", pauseLabel);
         resumeLabel = text(intent, "resume", resumeLabel);
         minusLabel = text(intent, "minus", minusLabel);
@@ -228,7 +230,7 @@ public class RestTimerService extends Service {
         try {
             long left = paused ? pausedLeft : Math.max(0, endsAt - System.currentTimeMillis());
             Notification n = RestAlert.countdownNotification(
-                    this, left, totalMs, paused, pauseLabel, resumeLabel, minusLabel, plusLabel, skipLabel, accent, ink);
+                    this, left, totalMs, paused, title, pauseLabel, resumeLabel, minusLabel, plusLabel, skipLabel, accent, ink);
             if (Build.VERSION.SDK_INT >= 34) {
                 startForeground(RestAlert.COUNTDOWN_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
             } else {

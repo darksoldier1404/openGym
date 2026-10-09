@@ -8,9 +8,12 @@ import android.app.PendingIntent;
 import android.content.Context;
 import android.content.res.ColorStateList;
 import android.content.Intent;
+import android.view.View;
 import android.widget.RemoteViews;
 import android.media.AudioAttributes;
+import android.media.AudioFocusRequest;
 import android.media.AudioFormat;
+import android.media.AudioManager;
 import android.media.AudioTrack;
 import android.os.Build;
 import android.os.PowerManager;
@@ -54,6 +57,7 @@ public final class RestAlert {
     private static int lastAccent = 0xFF30D158;
     private static int lastInk = 0xFF000000;
     static final int COUNTDOWN_ID = 41;
+    private static final boolean SAMSUNG = "samsung".equalsIgnoreCase(Build.MANUFACTURER);
     static final int NOTIFICATION_ID = 42;
     static final String COUNTDOWN_CHANNEL_ID = "rest-countdown";
     private static final int FLAGS = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE;
@@ -186,12 +190,16 @@ public final class RestAlert {
             if (alarmBuzz) buzz(ctx, VIBRATE);
             // Settings → Vibrate off is off here too: without notifications this buzz is the alert.
             else if (!shown && vibrate) vibrateFallback(ctx);
+            // Locked or in the background, the page cannot play its chime, so this is the one.
+            // It plays BEFORE the countdown stops: the countdown's foreground service is what
+            // keeps the app in the foreground state. Stopped first, a locked Galaxy (One UI's app
+            // freezer) froze the process before the tone started, and the "rest over"
+            // notification came up without a sound (Galaxy Z Flip 6).
+            boolean play = intent.getBooleanExtra("sound", true);
+            if (play) playSound(ctx);
             // The countdown card is the foreground-service notification. Drop it once the
             // "rest over" alert is up, including when the WebView is frozen.
             stopCountdown(ctx);
-            // Locked or in the background, the page cannot play its chime, so this is the one.
-            boolean play = intent.getBooleanExtra("sound", true);
-            if (play) playSound(ctx);
         } finally {
             if (cpu != null && cpu.isHeld()) cpu.release();
         }
@@ -405,12 +413,20 @@ public final class RestAlert {
     }
 
     /**
-     * One clock and one bar, in both the collapsed and the expanded card. The standard
-     * title/text/subtext slots are left empty: Samsung prints each of them, which stacked
-     * the same time three times next to the bar.
+     * One clock and one bar, in both the collapsed and the expanded card.
+     *
+     * The title ("Rest") and the text (the clock) are filled too: they are what a surface that
+     * cannot draw a custom card falls back on. The cover screen of a Galaxy Z Flip shows a
+     * notification's title and text and nothing of its RemoteViews, so with them empty the rest
+     * timer did not show there at all (Z Flip 6). The service reposts every second, so the text
+     * keeps time there too. Stock Android hides both behind the custom card; Samsung prints every
+     * standard slot next to it (a time in title, text and subtext once stacked the same clock
+     * three times beside the bar), so on Samsung the card's own clock steps aside for them and
+     * the subtext stays empty.
      */
     @SuppressWarnings("deprecation")
     static Notification countdownNotification(Context ctx, long leftMs, long totalMs, boolean paused,
+                                              String title,
                                               String pause, String resume, String minus, String plus, String skip,
                                               int accent, int ink) {
         int max = (int) Math.max(1, Math.round(totalMs / 1000.0));
@@ -442,6 +458,8 @@ public final class RestAlert {
                 .setColor(accent)
                 .setContentIntent(openApp(ctx))
                 .setLocalOnly(true);
+        b.setContentTitle(title == null || title.isEmpty() ? "Rest" : title);
+        b.setContentText(clock);
         if (Build.VERSION.SDK_INT >= 24) {
             b.setCustomContentView(compact);
             b.setCustomBigContentView(expanded);
@@ -463,6 +481,8 @@ public final class RestAlert {
 
     private static void fillClock(RemoteViews views, String clock, int max, int left, int accent) {
         views.setTextViewText(R.id.rest_clock, clock);
+        // Samsung already prints the clock from the notification's text (countdownNotification).
+        if (SAMSUNG) views.setViewVisibility(R.id.rest_clock, View.GONE);
         views.setProgressBar(R.id.rest_bar, max, left, false);
         if (Build.VERSION.SDK_INT >= 31) {
             views.setColorStateList(R.id.rest_bar, "setProgressTintList", ColorStateList.valueOf(accent));
@@ -509,6 +529,8 @@ public final class RestAlert {
 
     private static void playClip(Context ctx, short[] samples) {
         AudioTrack track = null;
+        AudioManager audio = null;
+        AudioFocusRequest focus = null;
         try {
             int bytes = samples.length * 2;
             int min = AudioTrack.getMinBufferSize(RATE, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT);
@@ -518,11 +540,24 @@ public final class RestAlert {
                 samples = padded;
                 bytes = samples.length * 2;
             }
+            AudioAttributes attrs = new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build();
+            // Short focus for the tone, so music playing at the gym ducks under it instead of
+            // drowning it, and handed back the moment it ends. Played either way: no focus is
+            // no reason to miss the end of a rest.
+            if (Build.VERSION.SDK_INT >= 26) {
+                audio = (AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
+                if (audio != null) {
+                    focus = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                            .setAudioAttributes(attrs)
+                            .build();
+                    try { audio.requestAudioFocus(focus); } catch (Exception ignored) { focus = null; }
+                }
+            }
             track = new AudioTrack.Builder()
-                    .setAudioAttributes(new AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_MEDIA)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                            .build())
+                    .setAudioAttributes(attrs)
                     .setAudioFormat(new AudioFormat.Builder()
                             .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                             .setSampleRate(RATE)
@@ -546,6 +581,9 @@ public final class RestAlert {
                 try { track.pause(); } catch (Exception ignored) { /* */ }
                 try { track.release(); } catch (Exception ignored) { /* */ }
                 if (current == track) current = null;
+            }
+            if (audio != null && focus != null && Build.VERSION.SDK_INT >= 26) {
+                try { audio.abandonAudioFocusRequest(focus); } catch (Exception ignored) { /* */ }
             }
         }
     }

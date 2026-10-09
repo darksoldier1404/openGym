@@ -7,6 +7,7 @@ import { buildSets, applyIntensifierPlan, modeOf } from './history.js'
 import { isWarmupRow } from './workout-model.js'
 import { nextPrescription, applyPrescription, defaultIncrement, weightIncrement, plannedOf } from './progression.js'
 import { dropGrid } from './plates.js'
+import { buildInExUnit } from './ex-unit.js'
 
 /**
  * Where a planned session's reps come from (Settings → During a workout). 'plan', the default:
@@ -25,7 +26,13 @@ export const startsFromLast = st => st?.startFrom === 'last'
  * the exercise is planned in: its own history comes first (#216) and its policy applies.
  * `noProg` builds the routine's own numbers with no prescription, as an excluded routine does.
  */
-export function buildPlannedEntry(st, cfg, routine, { noProg = false } = {}) {
+export function buildPlannedEntry(st, cfg, routine, opts) {
+  // An exercise with a unit of its own (lib/ex-unit.js) is planned in that unit — its history,
+  // its steps, its plates — and handed back in the profile's.
+  return buildInExUnit(st, cfg, (view, own) => buildPlannedIn(view, own, routine, opts))
+}
+
+function buildPlannedIn(st, cfg, routine, { noProg = false } = {}) {
   // `plan` is kept on the entry purely so the workout can explain the number it chose.
   const plan = noProg ? { policy: 'off', kind: 'off' } : nextPrescription(st, cfg, routine)
   // The warm-up ramp and the prescription snap to the exercise's own increment (1.25 kg

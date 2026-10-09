@@ -13,6 +13,7 @@ import { buildSets, applyIntensifierPlan, modeOf, setsFromRows } from './history
 import { isWarmupRow } from './workout-model.js'
 import { dropGrid } from './plates.js'
 import { weightIncrement, defaultIncrement } from './progression.js'
+import { buildInExUnit } from './ex-unit.js'
 
 const sourceEntries = w => (Array.isArray(w?.entries) ? w.entries : []).filter(entry => entry?.sets?.length)
 
@@ -37,13 +38,17 @@ export function repeatSessionEntries(st, w, { exists = id => !!EXIDX[id] } = {})
     // A per-side timed hold logs a left and a right row per set (setsFromRows).
     const done = setsFromRows(setup, (source?.sets || []).filter(row => row?.done && !isWarmupRow(row)).length)
     const cfg = { ...setup, ...(done ? { sets: done } : {}) }
-    const step = modeOf(cfg) === 'reps' ? weightIncrement(cfg, st?.unit) : defaultIncrement(cfg.id, st?.unit)
     // Only this entry of this workout is history here, so a later session of the same exercise,
-    // or the same exercise twice in one workout, does not seed the rows.
+    // or the same exercise twice in one workout, does not seed the rows. Built in the exercise's
+    // own unit when it has one (lib/ex-unit.js).
     const only = { ...st, workouts: [{ ...w, entries: [source] }] }
-    const sets = applyIntensifierPlan(buildSets(only, cfg, { step, preferLast: true }), cfg, dropGrid(st, cfg))
-      .map(row => ({ ...row, done: false }))
-    entries.push({ id: cfg.id, ...(sg ? { sg } : {}), target: { ...cfg }, plan: null, sets })
+    const built = buildInExUnit(only, cfg, (view, own) => {
+      const step = modeOf(own) === 'reps' ? weightIncrement(own, view?.unit) : defaultIncrement(own.id, view?.unit)
+      const sets = applyIntensifierPlan(buildSets(view, own, { step, preferLast: true }), own, dropGrid(view, own))
+      return { target: { ...own }, sets }
+    })
+    const sets = built.sets.map(row => ({ ...row, done: false }))
+    entries.push({ id: cfg.id, ...(sg ? { sg } : {}), target: built.target, plan: null, sets })
   })
   return { entries: regroup(entries), skipped }
 }
