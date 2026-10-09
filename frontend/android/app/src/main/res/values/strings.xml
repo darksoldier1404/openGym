@@ -8,4 +8,5 @@
     <string name="rest_channel_name">Rest timer</string>
     <string name="rest_quiet_channel_name">Rest timer, without vibration</string>
     <string name="rest_channel_desc">Rest between sets, in the notification shade. The lock screen shows it only when notifications are allowed there.</string>
+    <string name="rest_widget_desc">The rest between sets on the cover screen: the time left, the bar, pause, ±15 s and skip.</string>
 </resources>

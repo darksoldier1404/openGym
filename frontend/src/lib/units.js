@@ -7,7 +7,7 @@ import { workoutVolume } from './history.js'
 import { EXIDX } from './exercises.js'
 import { defaultBarWeight } from './bar.js'
 
-const LB_PER_KG = 2.2046226218
+export const LB_PER_KG = 2.2046226218
 
 export function convertWeight(value, from, to) {
   if (from === to || value == null || value === '' || !Number.isFinite(Number(value))) return value
@@ -25,23 +25,26 @@ export function convertBodyWeight(value, from, to) {
   return Math.round((to === 'lb' ? v * LB_PER_KG : v / LB_PER_KG) * 10) / 10
 }
 
-const convSet = (set, from, to) => {
+// The walkers below take the conversion as `conv` (convertWeight unless said otherwise): the
+// per-exercise unit (lib/ex-unit.js) brings an exercise's loads into its own unit with the
+// plate rounding, and takes them back with the exact figure so nothing drifts on the way.
+export const convSet = (set, from, to, conv = convertWeight) => {
   if (!set || typeof set !== 'object') return set
   const out = { ...set }
   if (isSideSet(set)) return syncSideAggregate({ ...set, sides: {
-    L: convSet(set.sides.L, from, to), R: convSet(set.sides.R, from, to),
+    L: convSet(set.sides.L, from, to, conv), R: convSet(set.sides.R, from, to, conv),
   } })
-  if (out.w != null) out.w = convertWeight(out.w, from, to)
-  if (Array.isArray(out.drops)) out.drops = out.drops.map(d => ({ ...d, w: convertWeight(d.w, from, to) }))
+  if (out.w != null) out.w = conv(out.w, from, to)
+  if (Array.isArray(out.drops)) out.drops = out.drops.map(d => ({ ...d, w: conv(d.w, from, to) }))
   return out
 }
-const convTarget = (cfg, from, to) => {
+export const convTarget = (cfg, from, to, conv = convertWeight) => {
   if (!cfg || typeof cfg !== 'object') return cfg
   const out = { ...cfg }
-  if (out.weight != null) out.weight = convertWeight(out.weight, from, to)
+  if (out.weight != null) out.weight = conv(out.weight, from, to)
   // A per-exercise increment is a load too — 2.5 kg is 5 lb, not 2.5 lb.
-  if (out.inc > 0 && (out.mode == null || out.mode === 'reps')) out.inc = convertWeight(out.inc, from, to)
-  if (Array.isArray(out.warmup)) out.warmup = out.warmup.map(w => (w && w.weight != null ? { ...w, weight: convertWeight(w.weight, from, to) } : w))
+  if (out.inc > 0 && (out.mode == null || out.mode === 'reps')) out.inc = conv(out.inc, from, to)
+  if (Array.isArray(out.warmup)) out.warmup = out.warmup.map(w => (w && w.weight != null ? { ...w, weight: conv(w.weight, from, to) } : w))
   return out
 }
 // A bar is a stamped object, not a number: the 45 lb bar IS the 20 kg bar (44.1 lb), so an
@@ -49,7 +52,7 @@ const convTarget = (cfg, from, to) => {
 // default takes over — 45 lb → 20 kg, not 20.5, which with a kg plate set would leave every row
 // "1 kg short". An explicit 0 ("no bar", lib/bar.js) stays 0. A custom bar converts like any
 // other weight (a 33 lb women's bar → 15 kg), and drops out too if it lands on the new default.
-const convBarWeights = (bw, from, to) => {
+export const convBarWeights = (bw, from, to) => {
   const out = {}
   for (const [id, v] of Object.entries(bw || {})) {
     if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) continue
@@ -62,15 +65,15 @@ const convBarWeights = (bw, from, to) => {
   }
   return out
 }
-const convEntry = (e, from, to) => {
+export const convEntry = (e, from, to, conv = convertWeight) => {
   if (!e || typeof e !== 'object') return e
   return {
     ...e,
-    ...(e.topW != null ? { topW: convertWeight(e.topW, from, to) } : {}),
-    ...(e.target ? { target: convTarget(e.target, from, to) } : {}),
+    ...(e.topW != null ? { topW: conv(e.topW, from, to) } : {}),
+    ...(e.target ? { target: convTarget(e.target, from, to, conv) } : {}),
     // The plan the entry was built from (lib/session-start.js) carries the routine's weight too.
-    ...(e.planned ? { planned: convTarget(e.planned, from, to) } : {}),
-    ...(Array.isArray(e.sets) ? { sets: e.sets.map(s => convSet(s, from, to)) } : {}),
+    ...(e.planned ? { planned: convTarget(e.planned, from, to, conv) } : {}),
+    ...(Array.isArray(e.sets) ? { sets: e.sets.map(s => convSet(s, from, to, conv)) } : {}),
   }
 }
 

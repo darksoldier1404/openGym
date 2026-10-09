@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The rest timer as a widget for the Galaxy Z Flip cover screen (Flex Window). The cover
+     screen does not draw a notification's progress bar or buttons, only a widget does. Size,
+     resize mode and the keyguard category are what Samsung asks of a Flex Window widget; the
+     Samsung half of the declaration is rest_widget_samsung.xml. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="352dp"
+    android:minHeight="339dp"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="keyguard"
+    android:initialLayout="@layout/rest_widget"
+    android:initialKeyguardLayout="@layout/rest_widget"
+    android:previewLayout="@layout/rest_widget"
+    android:description="@string/rest_widget_desc"
+    android:updatePeriodMillis="0" />

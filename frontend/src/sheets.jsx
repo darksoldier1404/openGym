@@ -46,6 +46,7 @@ import { swapActiveExercise } from './lib/active-exercise-swap.js'
 import { useSheetKeyboard, useRevealActiveChip, tappable } from './lib/use-sheet-keyboard.js'
 import { isFav, toggleFav, sortFavouritesFirst } from './lib/favourites.js'
 import { buildSessionEntries, buildPlannedEntry, builtOutOfProgression } from './lib/session-start.js'
+import { buildInExUnit, exUnitOf, profileUnit, targetToExUnit, targetFromExUnit, retargetUnit } from './lib/ex-unit.js'
 import { joinSessionNoProg } from './lib/session-noprog.js'
 import { buildCombinedEntries, deriveSessionName } from './lib/session-merge.js'
 import { workoutsOn, backfillStart, backfillEnd, completeBackfill, historyAsOf, sessionHistory } from './lib/backfill.js'
@@ -1291,10 +1292,13 @@ export function swapActiveWorkoutExercise(index) {
     // Same rows the add flow builds: last time's loads and, in a planned session, the
     // prescription — swapping barbell for dumbbell bench must not start you at an empty bar.
     // Built from what came before the session's day when it is logged into the past (sessionHistory).
-    const step = modeOf(full) === 'reps' ? weightIncrement(full, st.unit) : defaultIncrement(ex.id, st.unit)
+    // An exercise with its own unit is built in it and handed back in the profile's (lib/ex-unit.js).
     const past = sessionHistory(st)
     const built = freestyle
-      ? { target: { ...cfg }, plan: null, sets: applyIntensifierPlan(buildSets(past, full, { step, preferLast: true }), full, dropGrid(st, full)) }
+      ? { plan: null, ...buildInExUnit(past, full, (view, own) => {
+        const step = modeOf(own) === 'reps' ? weightIncrement(own, view.unit) : defaultIncrement(ex.id, view.unit)
+        return { target: { ...own }, sets: applyIntensifierPlan(buildSets(view, own, { step, preferLast: true }), own, dropGrid(view, own)) }
+      }) }
       : buildPlannedEntry(past, full, slotRoutine, { noProg: builtOutOfProgression(current, slotRoutine) })
     const replacement = {
       id: ex.id,
@@ -1461,8 +1465,14 @@ function ExConfig({ ex, existing, onSave, onDelete, onReplace, close, routine, i
   const cardio = isCardio(ex.id)
   const speedUnit = speedUnitOf(st)
   const seed = existing || initial || defaultConfig(ex.id)
+  // The exercise's own weight unit (lib/ex-unit.js): the draft's weights, warm-ups and step are
+  // in it, and go back to the profile's unit on Save. Cardio has no load to show in it.
+  const update = useStore(s => s.update)
+  const xu = cardio ? profileUnit(st) : exUnitOf(st, ex.id)
   const [c, setC] = useState(() => {
-    const cfg = { ...seed }
+    const shown = targetToExUnit(st, { ...seed, id: ex.id })
+    const cfg = { ...shown }
+    if (seed.id == null) delete cfg.id
     return policyFor({ ...cfg, id: ex.id }, routine, modeOf({ ...cfg, id: ex.id })) === 'double'
       ? { ...cfg, ...normalizeRepRange(cfg.reps, cfg.repsMin, isPerSide(cfg) ? 2 : 1) }
       : cfg
@@ -1477,7 +1487,22 @@ function ExConfig({ ex, existing, onSave, onDelete, onReplace, close, routine, i
   const pyramid = mode === 'reps' && isPyramid({ ...c, mode })
   const setPyramidAt = (i, v) => setC(x => ({ ...x, pyramid: x.pyramid.map((p, j) => (j === i ? v : p)) }))
   const progressionPolicy =policyFor({ ...c, id: ex.id }, routine, mode)
-  const progressionStepInvalid = !progressionStepIsValid(progressionStepOf(c, mode, ex, st.unit), progressionPolicy)
+  const progressionStepInvalid = !progressionStepIsValid(progressionStepOf(c, mode, ex, xu), progressionPolicy)
+  // Picked here it applies at once, like the plate loading further down: the draft is moved into
+  // the new unit and the choice is written straight to S.exUnit, Save or not.
+  const setUnit = to => {
+    if (to === xu) return
+    setC(x => retargetUnit(x, xu, to))
+    update(s => {
+      s.exUnit = s.exUnit || {}
+      if (to === profileUnit(s)) delete s.exUnit[ex.id]; else s.exUnit[ex.id] = to
+    })
+  }
+  const saveCfg = cfg => {
+    if (xu === profileUnit(st)) return onSave(cfg)
+    const { id, ...back } = targetFromExUnit(st, { ...cfg, id: ex.id }, xu)
+    onSave(back)
+  }
   const activePolicy = policyFor({ ...c, id: ex.id }, routine, mode)
   const double = mode === 'reps' && activePolicy === 'double'
   // Keep whatever the other mode already had (sets, weight) and fill only what is missing.
@@ -1525,7 +1550,7 @@ function ExConfig({ ex, existing, onSave, onDelete, onReplace, close, routine, i
     const restSec = Math.max(0, Math.round(c.restSec) || 0)
     const withRest = restSec ? { restSec } : {}
     if (cardio) onSave({ sets, min: Math.max(1, Math.round(c.min) || 20), speed: Math.max(0, c.speed || 8), ...withNote, ...withRest })
-    else if (mode === 'time') onSave({ sets, mode: 'time', sec: Math.max(1, Math.round(c.sec) || 45), weight: Math.max(0, c.weight || 0), ...flags, ...(perSide ? { side: true } : {}), ...prog, ...withNote, ...withWarmups, ...withRest })
+    else if (mode === 'time') saveCfg({ sets, mode: 'time', sec: Math.max(1, Math.round(c.sec) || 45), weight: Math.max(0, c.weight || 0), ...flags, ...(perSide ? { side: true } : {}), ...prog, ...withNote, ...withWarmups, ...withRest })
     else {
       // A unilateral target is stored even: the split has to divide, and a typed 15 would
       // otherwise plan seven reps on one side and eight on the other, every session.
@@ -1550,7 +1575,7 @@ function ExConfig({ ex, existing, onSave, onDelete, onReplace, close, routine, i
       // Every set in this exercise becomes a drop-set/rest-pause (buildSets stamps the rows) —
       // decided here, in the plan, not re-decided live each time you train it.
       if (!list.length && c.intensifier && c.intensifier.type) out.intensifier = intensifierToSave(c.intensifier)
-      onSave(out)
+      saveCfg(out)
     }
   }
   return <>
@@ -1572,6 +1597,11 @@ function ExConfig({ ex, existing, onSave, onDelete, onReplace, close, routine, i
       <Segmented className="seg-range" value={mode} onChange={setMode}
         options={[{ value: 'reps', label: t('Reps') }, { value: 'time', label: t('Time') }]} />
     </div>}
+    {!cardio && <div style={{ marginBottom: 14 }}>
+      <div className="small dim" style={{ marginBottom: 6 }}>{t('Weight unit')}</div>
+      <Segmented className="seg-range" value={xu} onChange={setUnit}
+        options={[{ value: 'kg', label: 'kg' }, { value: 'lb', label: 'lb' }]} />
+    </div>}
     <div className="row cfgrow" style={{ marginBottom: mode === 'time' ? 8 : 18 }}>
       {cardio ? <>
         <Stepper label={t('Intervals')} value={c.sets} step={1} decimal={false} onChange={v => setC(x => ({ ...x, sets: v }))} />
@@ -1584,7 +1614,7 @@ function ExConfig({ ex, existing, onSave, onDelete, onReplace, close, routine, i
         <Stepper label={t('Seconds')} value={c.sec} step={5} decimal={false} onChange={v => setC(x => ({ ...x, sec: v }))} />
         {/* A bodyweight hold's load is the "Added" row below — showing both put two fields on
             one value. */}
-        {!bw && <Stepper label={t('Weight ({0})', st.unit)} value={c.weight} step={2.5} onChange={v => setC(x => ({ ...x, weight: v }))} />}
+        {!bw && <Stepper label={t('Weight ({0})', xu)} value={c.weight} step={xu === 'lb' ? 5 : 2.5} onChange={v => setC(x => ({ ...x, weight: v }))} />}
       </> : <>
         {/* Rest-pause always trains as exactly two rows — a warm-up at this rep count, then one
             rest-pause work set — so "Sets" has nothing left to mean and only invites a mismatch. */}
@@ -1593,7 +1623,7 @@ function ExConfig({ ex, existing, onSave, onDelete, onReplace, close, routine, i
         {!double && !pyramid && <Stepper label={t('Reps')} value={c.reps} step={perSide ? 2 : 1} decimal={false} onChange={v => setC(x => ({ ...x, reps: v }))} />}
         {/* On bodyweight work the weight stepper is the click #32 is about, so it is not here
             until there is a belt to describe — see the added-weight row below. */}
-        {!bw && !pyramid && <Stepper label={t('Weight ({0})', st.unit)} value={c.weight} step={2.5} onChange={v => setC(x => ({ ...x, weight: v }))} />}
+        {!bw && !pyramid && <Stepper label={t('Weight ({0})', xu)} value={c.weight} step={xu === 'lb' ? 5 : 2.5} onChange={v => setC(x => ({ ...x, weight: v }))} />}
       </>}
     </div>
     {/* Pyramid sets: a row per set, each with its own reps or Max. No weight — that is picked
@@ -1707,7 +1737,7 @@ function ExConfig({ ex, existing, onSave, onDelete, onReplace, close, routine, i
         reps, with its explanation underneath. */}
     {bw && <>
       <div className="row cfgrow" style={{ marginBottom: 8 }}>
-        <Stepper label={t('Added ({0})', st.unit)} value={c.weight || 0} step={2.5}
+        <Stepper label={t('Added ({0})', xu)} value={c.weight || 0} step={2.5}
           onChange={v => setC(x => ({ ...x, weight: v }))} />
       </div>
       <div className="small dim" style={{ marginBottom: 18 }}>
@@ -1770,7 +1800,7 @@ function ExConfig({ ex, existing, onSave, onDelete, onReplace, close, routine, i
     </>}
     {pyramid
       ? <div className="small dim" style={{ marginBottom: 18 }}>{t('Weight is up to you: pyramid sets are not progressed automatically.')}</div>
-      : <ProgressionFields ex={ex} mode={mode} c={c} setC={setC} routine={routine} unit={st.unit} perSide={perSide} />}
+      : <ProgressionFields ex={ex} mode={mode} c={c} setC={setC} routine={routine} unit={xu} perSide={perSide} />}
     <textarea className="input" rows={3} maxLength={500} style={{ marginBottom: 18 }}
       placeholder={t('Note (optional): loading cues, "bar only, then +1 plate/side each set", anything worth remembering')}
       value={c.note || ''} onChange={e => setC(x => ({ ...x, note: e.target.value }))} />

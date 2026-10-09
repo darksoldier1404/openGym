@@ -2272,10 +2272,28 @@ describe('the workout screen chrome (v1.3.11)', () => {
     expect(groups).toEqual([
       ['Today', ['Swap exercise', 'Add warm-up set', 'Add note', 'Don’t count for progression']],
       ['Look it up', ['History', 'How to do it']],
-      ['Settings', ['Exercise settings', 'Rest timer', 'Plate loading']],
+      ['Settings', ['Exercise settings', 'Rest timer', 'Weight unit', 'Plate loading']],
       ['Order and supersets', ['Make superset with next', 'Move up', 'Move down']],
       [undefined, ['Remove exercise']],
     ])
+  })
+
+  it('shows an exercise in its own weight unit and switches it from the menu', async () => {
+    await mount([exercise('plain-bench', [false])], 0, { exUnit: { 'plain-bench': 'lb' } })
+    expect(container.querySelector('.sethead .w-sp').textContent).toBe('Weight (lb)')
+    expect(container.querySelector('.setrow .val input').value).toBe('132.28')
+    await openMore()
+    expect(item('Weight unit').sub).toBe('lb')
+    item('Weight unit').onClick()
+    expect(mocks.S.exUnit).toEqual({})
+    // The sets themselves stay in the profile's unit throughout.
+    expect(mocks.S.active.entries[0].sets[0].w).toBe(60)
+    await mount([exercise('plain-bench', [false])])
+    expect(container.querySelector('.sethead .w-sp').textContent).toBe('Weight (kg)')
+    await openMore()
+    expect(item('Weight unit').sub).toBe('Default (kg)')
+    item('Weight unit').onClick()
+    expect(mocks.S.exUnit).toEqual({ 'plain-bench': 'lb' })
   })
 
   it('sets an exercise’s own rest on the wheel, 0:00 meaning the default', async () => {

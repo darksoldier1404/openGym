@@ -37,6 +37,24 @@
             android:name=".RestAlertReceiver"
             android:exported="false" />
 
+        <!-- The rest timer on the Galaxy Z Flip cover screen (Flex Window), which shows no
+             notification bar or buttons. The Samsung meta-data lists it among the cover
+             screen's widgets; RestTimerService paints it. -->
+        <receiver
+            android:name=".RestWidget"
+            android:exported="true"
+            android:label="@string/rest_channel_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/rest_widget_info" />
+            <meta-data
+                android:name="com.samsung.android.appwidget.provider"
+                android:resource="@xml/rest_widget_samsung" />
+        </receiver>
+
         <!-- Reposts the rest countdown every second so the notification shade keeps the
              clock and a shrinking bar after the WebView is frozen. The lock screen shows
              it only when the user allows notifications there. specialUse: this is a timer,
@@ -77,6 +95,9 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Android 16 Live Updates: lets the rest countdown be promoted (One UI's Now Bar, the
+         lock and cover screens). A normal permission, granted at install; older versions ignore it. -->
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
     <!-- Gym check-in: scanning a membership QR/barcode with the camera. -->
     <uses-permission android:name="android.permission.CAMERA" />
 </manifest>

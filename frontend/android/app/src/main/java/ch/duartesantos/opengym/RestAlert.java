@@ -10,7 +10,9 @@ import android.content.res.ColorStateList;
 import android.content.Intent;
 import android.widget.RemoteViews;
 import android.media.AudioAttributes;
+import android.media.AudioFocusRequest;
 import android.media.AudioFormat;
+import android.media.AudioManager;
 import android.media.AudioTrack;
 import android.os.Build;
 import android.os.PowerManager;
@@ -54,6 +56,7 @@ public final class RestAlert {
     private static int lastAccent = 0xFF30D158;
     private static int lastInk = 0xFF000000;
     static final int COUNTDOWN_ID = 41;
+    private static final boolean SAMSUNG = "samsung".equalsIgnoreCase(Build.MANUFACTURER);
     static final int NOTIFICATION_ID = 42;
     static final String COUNTDOWN_CHANNEL_ID = "rest-countdown";
     private static final int FLAGS = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE;
@@ -186,12 +189,16 @@ public final class RestAlert {
             if (alarmBuzz) buzz(ctx, VIBRATE);
             // Settings → Vibrate off is off here too: without notifications this buzz is the alert.
             else if (!shown && vibrate) vibrateFallback(ctx);
+            // Locked or in the background, the page cannot play its chime, so this is the one.
+            // It plays BEFORE the countdown stops: the countdown's foreground service is what
+            // keeps the app in the foreground state. Stopped first, a locked Galaxy (One UI's app
+            // freezer) froze the process before the tone started, and the "rest over"
+            // notification came up without a sound (Galaxy Z Flip 6).
+            boolean play = intent.getBooleanExtra("sound", true);
+            if (play) playSound(ctx);
             // The countdown card is the foreground-service notification. Drop it once the
             // "rest over" alert is up, including when the WebView is frozen.
             stopCountdown(ctx);
-            // Locked or in the background, the page cannot play its chime, so this is the one.
-            boolean play = intent.getBooleanExtra("sound", true);
-            if (play) playSound(ctx);
         } finally {
             if (cpu != null && cpu.isHeld()) cpu.release();
         }
@@ -286,7 +293,7 @@ public final class RestAlert {
         nm.createNotificationChannel(channel);
     }
 
-    private static PendingIntent openApp(Context ctx) {
+    static PendingIntent openApp(Context ctx) {
         Intent open = new Intent(ctx, MainActivity.class);
         open.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_NEW_TASK);
         return PendingIntent.getActivity(ctx, NOTIFICATION_ID + 1, open, FLAGS);
@@ -405,12 +412,18 @@ public final class RestAlert {
     }
 
     /**
-     * One clock and one bar, in both the collapsed and the expanded card. The standard
-     * title/text/subtext slots are left empty: Samsung prints each of them, which stacked
-     * the same time three times next to the bar.
+     * One clock and one bar, in both the collapsed and the expanded card.
+     *
+     * The title ("Rest") and the text (the clock) are filled too, for any surface that cannot
+     * draw a custom card; stock Android hides both behind it.
+     *
+     * Samsung gets the system's own template instead (samsungCountdown): the cover screen of a
+     * Galaxy Z Flip draws no RemoteViews at all, so the custom card showed there without its bar
+     * and its clock (Z Flip 6), and One UI prints every standard slot beside a custom card anyway.
      */
     @SuppressWarnings("deprecation")
     static Notification countdownNotification(Context ctx, long leftMs, long totalMs, boolean paused,
+                                              String title,
                                               String pause, String resume, String minus, String plus, String skip,
                                               int accent, int ink) {
         int max = (int) Math.max(1, Math.round(totalMs / 1000.0));
@@ -418,6 +431,7 @@ public final class RestAlert {
         String clock = clock(left);
         NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
         ensureCountdownChannel(ctx, nm);
+        if (SAMSUNG) return samsungCountdown(ctx, max, left, clock, paused, title, pause, resume, minus, plus, skip, accent);
         RemoteViews compact = new RemoteViews(ctx.getPackageName(), R.layout.rest_countdown);
         fillClock(compact, clock, max, left, accent);
         RemoteViews expanded = new RemoteViews(ctx.getPackageName(), R.layout.rest_countdown_big);
@@ -442,6 +456,8 @@ public final class RestAlert {
                 .setColor(accent)
                 .setContentIntent(openApp(ctx))
                 .setLocalOnly(true);
+        b.setContentTitle(title == null || title.isEmpty() ? "Rest" : title);
+        b.setContentText(clock);
         if (Build.VERSION.SDK_INT >= 24) {
             b.setCustomContentView(compact);
             b.setCustomBigContentView(expanded);
@@ -459,6 +475,83 @@ public final class RestAlert {
             b.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE);
         }
         return b.build();
+    }
+
+    /**
+     * The countdown in the system's own template, for Samsung: title, the clock as the text, the
+     * system progress bar and the four controls as notification actions. That is what the Z Flip
+     * cover screen and the lock screen can draw, where a custom card came out without its bar
+     * and clock. It also meets Android 16's terms for a Live Update (no custom views, ongoing,
+     * a title, not colorized), which One UI shows in the Now Bar; asked for through the extra by
+     * its name, so the app still builds against API 35.
+     */
+    @SuppressWarnings("deprecation")
+    private static Notification samsungCountdown(Context ctx, int max, int left, String clock, boolean paused,
+                                                 String title, String pause, String resume, String minus, String plus,
+                                                 String skip, int accent) {
+        Notification.Builder b = Build.VERSION.SDK_INT >= 26
+                ? new Notification.Builder(ctx, COUNTDOWN_CHANNEL_ID)
+                : new Notification.Builder(ctx);
+        b.setSmallIcon(R.drawable.ic_stat_dumbbell)
+                .setContentTitle(title == null || title.isEmpty() ? "Rest" : title)
+                .setContentText(clock)
+                .setProgress(max, left, false)
+                .setShowWhen(false)
+                .setOngoing(true)
+                .setCategory(Notification.CATEGORY_PROGRESS)
+                .setVisibility(Notification.VISIBILITY_PUBLIC)
+                .setColor(accent)
+                .setContentIntent(openApp(ctx))
+                .setLocalOnly(true)
+                .addAction(action(ctx, paused ? resume : pause, ACTION_PAUSE, 51))
+                .addAction(action(ctx, minus, ACTION_MINUS, 52))
+                .addAction(action(ctx, plus, ACTION_PLUS, 53))
+                .addAction(action(ctx, skip, ACTION_SKIP, 54));
+        android.os.Bundle extras = new android.os.Bundle();
+        extras.putBoolean("android.requestPromotedOngoing", true);
+        b.addExtras(extras);
+        if (Build.VERSION.SDK_INT >= 36) liveUpdate(b, max, left, clock, accent);
+        if (Build.VERSION.SDK_INT >= 26) b.setOnlyAlertOnce(true);
+        else b.setPriority(Notification.PRIORITY_DEFAULT);
+        if (Build.VERSION.SDK_INT >= 31) {
+            b.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE);
+        }
+        return b.build();
+    }
+
+    /**
+     * Android 16's Live Update shape, which One UI 8 shows in the Now Bar — on the Z Flip cover
+     * screen too, the one place there a notification gets a bar and controls; an ordinary
+     * notification there shows only its title and text. A ProgressStyle bar (shrinking with the
+     * rest, like the app's), the clock as the status-bar chip, and the promotion asked for.
+     * Called by reflection: the app compiles against API 35, where none of these exist, and any
+     * failure leaves the plain template, which still works.
+     */
+    private static void liveUpdate(Notification.Builder b, int max, int left, String clock, int accent) {
+        try {
+            Class<?> styleClass = Class.forName("android.app.Notification$ProgressStyle");
+            Class<?> segmentClass = Class.forName("android.app.Notification$ProgressStyle$Segment");
+            Object segment = segmentClass.getConstructor(int.class).newInstance(max);
+            segmentClass.getMethod("setColor", int.class).invoke(segment, accent);
+            Object style = styleClass.getConstructor().newInstance();
+            styleClass.getMethod("setProgressSegments", java.util.List.class).invoke(style, java.util.Collections.singletonList(segment));
+            styleClass.getMethod("setProgress", int.class).invoke(style, left);
+            b.setStyle((Notification.Style) style);
+        } catch (Throwable e) {
+            Log.w("openGym", "ProgressStyle unavailable", e);
+        }
+        try {
+            Notification.Builder.class.getMethod("setShortCriticalText", String.class).invoke(b, clock);
+        } catch (Throwable ignored) { /* no status-bar chip text */ }
+        try {
+            Notification.Builder.class.getMethod("setRequestPromotedOngoing", boolean.class).invoke(b, true);
+        } catch (Throwable ignored) { /* the extra above still asks */ }
+    }
+
+    private static Notification.Action action(Context ctx, String label, String act, int code) {
+        return new Notification.Action.Builder(
+                android.graphics.drawable.Icon.createWithResource(ctx, R.drawable.ic_stat_dumbbell),
+                label, control(ctx, act, code)).build();
     }
 
     private static void fillClock(RemoteViews views, String clock, int max, int left, int accent) {
@@ -479,7 +572,7 @@ public final class RestAlert {
         }
     }
 
-    private static PendingIntent control(Context ctx, String action, int code) {
+    static PendingIntent control(Context ctx, String action, int code) {
         Intent i = new Intent(ctx, RestTimerService.class);
         i.setAction(action);
         return PendingIntent.getService(ctx, code, i, FLAGS);
@@ -509,6 +602,8 @@ public final class RestAlert {
 
     private static void playClip(Context ctx, short[] samples) {
         AudioTrack track = null;
+        AudioManager audio = null;
+        AudioFocusRequest focus = null;
         try {
             int bytes = samples.length * 2;
             int min = AudioTrack.getMinBufferSize(RATE, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT);
@@ -518,11 +613,24 @@ public final class RestAlert {
                 samples = padded;
                 bytes = samples.length * 2;
             }
+            AudioAttributes attrs = new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build();
+            // Short focus for the tone, so music playing at the gym ducks under it instead of
+            // drowning it, and handed back the moment it ends. Played either way: no focus is
+            // no reason to miss the end of a rest.
+            if (Build.VERSION.SDK_INT >= 26) {
+                audio = (AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
+                if (audio != null) {
+                    focus = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                            .setAudioAttributes(attrs)
+                            .build();
+                    try { audio.requestAudioFocus(focus); } catch (Exception ignored) { focus = null; }
+                }
+            }
             track = new AudioTrack.Builder()
-                    .setAudioAttributes(new AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_MEDIA)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                            .build())
+                    .setAudioAttributes(attrs)
                     .setAudioFormat(new AudioFormat.Builder()
                             .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                             .setSampleRate(RATE)
@@ -546,6 +654,9 @@ public final class RestAlert {
                 try { track.pause(); } catch (Exception ignored) { /* */ }
                 try { track.release(); } catch (Exception ignored) { /* */ }
                 if (current == track) current = null;
+            }
+            if (audio != null && focus != null && Build.VERSION.SDK_INT >= 26) {
+                try { audio.abandonAudioFocusRequest(focus); } catch (Exception ignored) { /* */ }
             }
         }
     }

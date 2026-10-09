@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Lists the rest widget among the cover screen's widgets (Settings → Cover screen → Widgets). -->
+<samsung-appwidget-provider display="sub_screen" />

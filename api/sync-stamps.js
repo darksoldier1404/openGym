@@ -65,7 +65,7 @@ const OWN_MERGE = new Set([
   'workouts', 'routines', 'customEx', 'equipProfiles', 'gymCards', 'bodyweight', 'favEx',
   'exWeights', 'balanceOverrides', 'loadKind', 'plates',
 ]);
-const PER_KEY = new Set(['week', 'dayPlan', 'exNotes', 'barWeights']);
+const PER_KEY = new Set(['week', 'dayPlan', 'exNotes', 'barWeights', 'exUnit']);
 const ENTRY_META = new Set(['id', '_ts', '_f', '_u']);
 const ENTRY_LISTS = ['routines', 'customEx', 'equipProfiles', 'gymCards', 'workouts'];
 

@@ -1,0 +1,43 @@
+# A debug APK of a pull request, for trying a change on a phone before it is merged. The signed
+# release APK is still built by GitLab CI on the mirror (.gitlab-ci.yml, build:apk); this one is
+# signed with the runner's throwaway debug key, so it cannot update an installed release build —
+# uninstall that first (export a backup in Settings → Data & backup before you do).
+name: Android debug APK
+
+on:
+  pull_request:
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/android-debug.yml'
+  workflow_dispatch:
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      # capacitor.build.gradle compiles for Java 21.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Web build and cap sync
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build:mobile
+      - name: assembleDebug
+        working-directory: frontend/android
+        run: ./gradlew --no-daemon assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openGym-debug-${{ github.event.pull_request.head.sha || github.sha }}
+          path: frontend/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
